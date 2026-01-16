@@ -276,7 +276,14 @@ def get_reference_forward_callable(
         # Use adapter-disabled model
         def ref_forward(**forward_inputs) -> torch.Tensor:
             with _inference_eval_context(model):
-                with model.disable_adapter():
+                disable_adapter = model.disable_adapter
+                if hasattr(disable_adapter, "__enter__") and hasattr(
+                    disable_adapter, "__exit__"
+                ):
+                    context_manager = disable_adapter
+                else:
+                    context_manager = disable_adapter()
+                with context_manager:
                     outputs = model(**forward_inputs)
                     return outputs if return_outputs else outputs.logits
 

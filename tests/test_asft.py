@@ -21,6 +21,11 @@ import torch.nn.functional as F
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+HAS_CUDA = torch.cuda.is_available()
+if not HAS_CUDA:
+    pytest.skip("CUDA is required for ASFT tests", allow_module_level = True)
+torch.set_default_device("cuda")
+
 from unsloth.losses.asft import (
     ASFTStreamingConfig,
     effective_logits,
