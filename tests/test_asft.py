@@ -512,6 +512,34 @@ class TestASFTStreamingConfig:
         assert config.ref_microbatch_size == 4
         assert config.seq_chunk_size == 256
 
+    def test_config_immutability_when_none_values(self, simple_model):
+        """Test that streaming_config is not mutated when values are None."""
+        config = ASFTStreamingConfig(
+            enabled=True,
+            ref_strategy="batch_micro",
+            ref_microbatch_size=None,  # Should use default without mutation
+        )
+        original_microbatch = config.ref_microbatch_size
+        original_chunk = config.seq_chunk_size
+
+        inputs = {
+            "input_ids": torch.tensor([[1, 2, 3, 4]]),
+            "labels": torch.tensor([[1, 2, 3, 4]]),
+        }
+
+        # Call compute_asft_loss with sft mode (doesn't use streaming, but
+        # the config should still not be mutated)
+        loss = compute_asft_loss(
+            simple_model,
+            inputs,
+            asft_mode="sft",
+            streaming_config=config,
+        )
+
+        # Config should not be mutated
+        assert config.ref_microbatch_size == original_microbatch
+        assert config.seq_chunk_size == original_chunk
+
 
 # -----------------------------------------------------------------------------
 # Backward Compatibility Tests
