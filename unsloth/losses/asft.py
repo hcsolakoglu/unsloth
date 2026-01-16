@@ -38,9 +38,9 @@ def effective_logits(
     logit_softcapping: float = 0.0,
     logit_scaling: float = 0.0,
 ) -> torch.Tensor:
-    if logit_scaling:
+    if logit_scaling != 0.0:
         logits = logit_scaling * logits
-    if logit_softcapping:
+    if logit_softcapping != 0.0:
         logits = (1.0 / logit_softcapping) * logits
         logits = torch.tanh(logits)
         logits = logit_softcapping * logits
@@ -102,7 +102,8 @@ def _get_logit_factors(model: Any) -> tuple[float, float]:
     logit_scaling = float(getattr(config, "logit_scale", 0) or 0)
     model_type = getattr(config, "model_type", None)
     if model_type == "granite":
-        logit_scaling = 1.0 / float(getattr(config, "logits_scaling", 1) or 1)
+        scaling_val = float(getattr(config, "logits_scaling", 1) or 1)
+        logit_scaling = 1.0 / scaling_val if scaling_val != 0.0 else 0.0
     elif model_type == "falcon_h1":
         logit_scaling = float(getattr(config, "lm_head_multiplier", 0) or 0)
     return logit_softcapping, logit_scaling
@@ -190,7 +191,7 @@ def get_reference_forward_callable(
         or getattr(model, "ref_model", None)
         or model
     )
-    strategy = (streaming_config.strategy if streaming_config else None) or None
+    strategy = streaming_config.strategy if streaming_config else None
     if strategy == "batch_micro":
         micro_batch_size = streaming_config.micro_batch_size or 1
 
