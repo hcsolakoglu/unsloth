@@ -68,12 +68,13 @@ def simple_model():
                 final_logit_softcapping = 0,
                 logit_scale = 0,
             )
+            self.embedding = nn.Embedding(16, 8)
             self.linear = nn.Linear(8, 8)
 
         def forward(self, input_ids = None, **kwargs):
-            # Simple identity-like forward
-            batch_size, seq_len = input_ids.shape
-            logits = torch.randn(batch_size, seq_len, 8, device = input_ids.device)
+            # Deterministic forward with gradients
+            embeddings = self.embedding(input_ids)
+            logits = self.linear(embeddings)
             return SimpleNamespace(logits = logits)
 
     return SimpleModel()
