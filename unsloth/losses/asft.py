@@ -50,6 +50,11 @@ __all__ = [
 ]
 
 
+# Default chunk sizes for streaming strategies
+_DEFAULT_SEQ_CHUNK_SIZE = 256
+_DEFAULT_REF_MICROBATCH_DIVISOR = 2  # batch_size // this value
+
+
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
@@ -173,24 +178,20 @@ def fast_cross_entropy_loss_per_token(
     else:
         vocab_size = logits.shape[-1]
 
-    # Create valid mask before modifying labels
+    # Create valid mask before computing loss
     valid_mask = labels != ignore_index
 
-    # Map ignore labels to 0 for index safety in kernel
-    # The kernel handles -100 internally, but we ensure safety
-    safe_labels = labels.clone()
-    safe_labels[~valid_mask] = 0
-
     # Compute per-token CE using Unsloth's Triton kernel
-    # The kernel already handles ignore_index internally and returns 0 for those
+    # The kernel already handles ignore_index (-100) internally and returns 0 for those
     losses = Fast_CrossEntropyLoss.apply(
         logits,
-        labels,  # Use original labels - kernel handles -100
+        labels,
         logit_softcapping,
         logit_scaling,
     )
 
     return losses, valid_mask
+
 
 
 # -----------------------------------------------------------------------------
@@ -615,8 +616,10 @@ def _compute_kl_seq_kv_cache(
 
             del ref_logits_chunk
 
-        except Exception:
-            # Fallback to full forward on any error
+        except (RuntimeError, ValueError, KeyError, TypeError) as e:
+            # Fallback to full forward on KV cache errors
+            # These exceptions typically indicate the model doesn't support
+            # the chunked KV cache approach (e.g., missing past_key_values support)
             ref_logits = ref_forward(**forward_inputs)
             kl_full = _compute_kl_divergence(
                 cur_logits,
@@ -631,6 +634,7 @@ def _compute_kl_seq_kv_cache(
             return kl_full
 
     return kl
+
 
 
 # -----------------------------------------------------------------------------
@@ -739,9 +743,11 @@ def compute_asft_loss(
         )
 
         # Compute KL based on streaming strategy
+        # Use local variables to avoid mutating the input config
         if streaming_config.enabled and streaming_config.ref_strategy == "batch_micro":
-            if streaming_config.ref_microbatch_size is None:
-                streaming_config.ref_microbatch_size = max(1, batch_size // 2)
+            ref_microbatch_size = streaming_config.ref_microbatch_size
+            if ref_microbatch_size is None:
+                ref_microbatch_size = max(1, batch_size // _DEFAULT_REF_MICROBATCH_DIVISOR)
             kl = _compute_kl_batch_micro(
                 model,
                 logits,
@@ -749,14 +755,15 @@ def compute_asft_loss(
                 valid_mask,
                 ref_forward,
                 forward_inputs,
-                streaming_config.ref_microbatch_size,
+                ref_microbatch_size,
                 logit_softcapping,
                 logit_scaling,
                 streaming_config.force_fp32_kl,
             )
         elif streaming_config.enabled and streaming_config.ref_strategy == "seq_kv_cache":
-            if streaming_config.seq_chunk_size is None:
-                streaming_config.seq_chunk_size = 256
+            seq_chunk_size = streaming_config.seq_chunk_size
+            if seq_chunk_size is None:
+                seq_chunk_size = _DEFAULT_SEQ_CHUNK_SIZE
             kl = _compute_kl_seq_kv_cache(
                 model,
                 logits,
@@ -764,7 +771,7 @@ def compute_asft_loss(
                 valid_mask,
                 ref_forward,
                 forward_inputs,
-                streaming_config.seq_chunk_size,
+                seq_chunk_size,
                 logit_softcapping,
                 logit_scaling,
                 streaming_config.force_fp32_kl,
