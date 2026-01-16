@@ -131,8 +131,39 @@ except:
 
 
 class UnslothTrainingArguments(TrainingArguments):
-    def __init__(self, embedding_learning_rate: float = None, *args, **kwargs):
-        embedding_learning_rate = embedding_learning_rate
+    def __init__(
+        self,
+        embedding_learning_rate: float = None,
+        asft_enabled: bool = False,
+        asft_mode: str = "asft",
+        kl_weight: float = 0.0,
+        reference_policy: str = "disable_adapter",
+        asft_streaming_enabled: bool = False,
+        asft_streaming_ref_strategy: str = "none",
+        asft_streaming_ref_microbatch_size: Optional[int] = None,
+        asft_streaming_seq_chunk_size: Optional[int] = None,
+        asft_streaming_kl_token_chunk_size: Optional[int] = None,
+        asft_streaming_force_fp32_kl: bool = True,
+        *args,
+        **kwargs,
+    ):
+        self.embedding_learning_rate = embedding_learning_rate
+        self.asft_enabled = asft_enabled
+        self.asft_mode = asft_mode
+        self.kl_weight = kl_weight
+        self.reference_policy = reference_policy
+
+        # Lazily import to avoid affecting default path when ASFT is disabled.
+        from unsloth.losses.asft import ASFTStreamingConfig
+
+        self.asft_streaming = ASFTStreamingConfig(
+            enabled = asft_streaming_enabled,
+            ref_strategy = asft_streaming_ref_strategy,
+            ref_microbatch_size = asft_streaming_ref_microbatch_size,
+            seq_chunk_size = asft_streaming_seq_chunk_size,
+            kl_token_chunk_size = asft_streaming_kl_token_chunk_size,
+            force_fp32_kl = asft_streaming_force_fp32_kl,
+        )
         super().__init__(*args, **kwargs)
 
 
@@ -196,6 +227,51 @@ class UnslothTrainer(SFTTrainer):
                 embedding_learning_rate,
             )
         return self.optimizer
+
+    def compute_loss(self, model, inputs, return_outputs = False, num_items_in_batch = None):
+        if num_items_in_batch is not None:
+            inputs = dict(inputs)
+            inputs["num_items_in_batch"] = num_items_in_batch
+        asft_enabled = bool(getattr(self.args, "asft_enabled", False))
+        if not asft_enabled:
+            return super().compute_loss(
+                model,
+                inputs,
+                return_outputs = return_outputs,
+                num_items_in_batch = num_items_in_batch,
+            )
+
+        from unsloth.losses.asft import ASFTStreamingConfig, compute_asft_loss
+
+        streaming = getattr(self.args, "asft_streaming", None)
+        if not isinstance(streaming, ASFTStreamingConfig):
+            streaming = ASFTStreamingConfig(
+                enabled = getattr(self.args, "asft_streaming_enabled", False),
+                ref_strategy = getattr(self.args, "asft_streaming_ref_strategy", "none"),
+                ref_microbatch_size = getattr(
+                    self.args, "asft_streaming_ref_microbatch_size", None
+                ),
+                seq_chunk_size = getattr(
+                    self.args, "asft_streaming_seq_chunk_size", None
+                ),
+                kl_token_chunk_size = getattr(
+                    self.args, "asft_streaming_kl_token_chunk_size", None
+                ),
+                force_fp32_kl = getattr(
+                    self.args, "asft_streaming_force_fp32_kl", True
+                ),
+            )
+
+        outputs = compute_asft_loss(
+            model,
+            inputs,
+            asft_mode = getattr(self.args, "asft_mode", "asft"),
+            kl_weight = getattr(self.args, "kl_weight", 0.0),
+            reference_policy = getattr(self.args, "reference_policy", "disable_adapter"),
+            streaming = streaming,
+            return_outputs = return_outputs,
+        )
+        return outputs
 
 
 # From `trl>=0.13.0`, they changed how to pass several params to the trainer

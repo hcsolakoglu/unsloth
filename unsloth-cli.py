@@ -37,7 +37,7 @@ def run(args):
     from unsloth import FastLanguageModel
     from datasets import load_dataset
     from transformers.utils import strtobool
-    from trl import SFTTrainer, SFTConfig
+    from unsloth.trainer import UnslothTrainer, UnslothTrainingArguments
     from unsloth import is_bfloat16_supported
     from unsloth.models.loader_utils import prepare_device_map
     import logging
@@ -133,7 +133,7 @@ def run(args):
     print("Data is formatted and ready!")
 
     # Configure training arguments
-    training_args = SFTConfig(
+    training_args = UnslothTrainingArguments(
         per_device_train_batch_size = args.per_device_train_batch_size,
         per_device_eval_batch_size = args.per_device_eval_batch_size,
         gradient_accumulation_steps = args.gradient_accumulation_steps,
@@ -153,10 +153,20 @@ def run(args):
         dataset_num_proc = 2,
         ddp_find_unused_parameters = False if distributed else None,
         packing = args.packing,
+        asft_enabled = args.asft,
+        asft_mode = args.asft_mode,
+        kl_weight = args.kl_weight,
+        reference_policy = args.reference_policy,
+        asft_streaming_enabled = args.asft_streaming,
+        asft_streaming_ref_strategy = args.ref_strategy,
+        asft_streaming_ref_microbatch_size = args.ref_microbatch_size,
+        asft_streaming_seq_chunk_size = args.seq_chunk_size,
+        asft_streaming_kl_token_chunk_size = args.kl_token_chunk_size,
+        asft_streaming_force_fp32_kl = args.force_fp32_kl,
     )
 
     # Initialize trainer
-    trainer = SFTTrainer(
+    trainer = UnslothTrainer(
         model = model,
         processing_class = tokenizer,
         train_dataset = dataset,
@@ -359,6 +369,69 @@ if __name__ == "__main__":
         "--packing",
         action = "store_true",
         help = "Enable padding-free sample packing via TRL's bin packer.",
+    )
+
+    asft_group = parser.add_argument_group("🧪 ASFT Options")
+    asft_group.add_argument(
+        "--asft",
+        action = "store_true",
+        help = "Enable Adaptive SFT loss path. Defaults to disabled.",
+    )
+    asft_group.add_argument(
+        "--asft_mode",
+        type = str,
+        default = "asft",
+        choices = ["sft", "dft", "sft+kl", "asft"],
+        help = "ASFT mode to use when --asft is enabled.",
+    )
+    asft_group.add_argument(
+        "--kl_weight",
+        type = float,
+        default = 0.0,
+        help = "KL weight for ASFT modes that include KL.",
+    )
+    asft_group.add_argument(
+        "--reference_policy",
+        type = str,
+        default = "disable_adapter",
+        choices = ["disable_adapter", "frozen_copy"],
+        help = "Reference policy used for ASFT KL computation.",
+    )
+    asft_group.add_argument(
+        "--asft_streaming",
+        action = "store_true",
+        help = "Enable streaming/microbatching for ASFT reference forward.",
+    )
+    asft_group.add_argument(
+        "--ref_strategy",
+        type = str,
+        default = "none",
+        choices = ["none", "batch_micro", "seq_kv_cache"],
+        help = "Reference streaming strategy.",
+    )
+    asft_group.add_argument(
+        "--ref_microbatch_size",
+        type = int,
+        default = None,
+        help = "Microbatch size for batch_micro reference strategy.",
+    )
+    asft_group.add_argument(
+        "--seq_chunk_size",
+        type = int,
+        default = None,
+        help = "Sequence chunk size for seq_kv_cache reference strategy.",
+    )
+    asft_group.add_argument(
+        "--kl_token_chunk_size",
+        type = int,
+        default = None,
+        help = "Optional KL token chunk size for memory control.",
+    )
+    asft_group.add_argument(
+        "--force_fp32_kl",
+        action = "store_true",
+        default = True,
+        help = "Force fp32 KL computation for numerical stability (default: on).",
     )
 
     report_group = parser.add_argument_group("📊 Report Options")
