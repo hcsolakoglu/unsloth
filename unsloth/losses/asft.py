@@ -41,9 +41,7 @@ def effective_logits(
     if logit_scaling != 0.0:
         logits = logit_scaling * logits
     if logit_softcapping != 0.0:
-        logits = (1.0 / logit_softcapping) * logits
-        logits = torch.tanh(logits)
-        logits = logit_softcapping * logits
+        logits = logit_softcapping * torch.tanh(logits / logit_softcapping)
     return logits
 
 
@@ -103,7 +101,7 @@ def _get_logit_factors(model: Any) -> tuple[float, float]:
     model_type = getattr(config, "model_type", None)
     if model_type == "granite":
         scaling_val = float(getattr(config, "logits_scaling", 1) or 1)
-        logit_scaling = 1.0 / scaling_val if scaling_val != 0.0 else 0.0
+        logit_scaling = 1.0 / scaling_val if scaling_val != 0.0 else 1.0
     elif model_type == "falcon_h1":
         logit_scaling = float(getattr(config, "lm_head_multiplier", 0) or 0)
     return logit_softcapping, logit_scaling
@@ -176,7 +174,10 @@ def _reference_forward_seq_kv_cache(
         logits_chunks.append(_extract_logits(out))
         past_key_values = getattr(out, "past_key_values", None)
         if past_key_values is None:
-            raise RuntimeError("ASFT seq_kv_cache requires past_key_values support.")
+            raise RuntimeError(
+                "ASFT seq_kv_cache requires past_key_values support. "
+                "Use a different streaming strategy or enable caching in the model."
+            )
     return torch.cat(logits_chunks, dim = 1)
 
 
