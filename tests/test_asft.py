@@ -42,33 +42,34 @@ from unsloth.losses.asft import (
 def dummy_logits():
     """Create dummy logits tensor (B=2, T=4, V=8)."""
     torch.manual_seed(42)
-    return torch.randn(2, 4, 8, requires_grad=True)
+    return torch.randn(2, 4, 8, requires_grad = True)
 
 
 @pytest.fixture
 def dummy_labels():
     """Create dummy labels tensor with some -100 values."""
     # Labels: [0, 1, 2, 3] and [4, 5, -100, -100]
-    return torch.tensor([[0, 1, 2, 3], [4, 5, -100, -100]], dtype=torch.long)
+    return torch.tensor([[0, 1, 2, 3], [4, 5, -100, -100]], dtype = torch.long)
 
 
 @pytest.fixture
 def simple_model():
     """Create a simple model for testing."""
+
     class SimpleModel(nn.Module):
         def __init__(self):
             super().__init__()
             self.config = SimpleNamespace(
-                final_logit_softcapping=0,
-                logit_scale=0,
+                final_logit_softcapping = 0,
+                logit_scale = 0,
             )
             self.linear = nn.Linear(8, 8)
 
-        def forward(self, input_ids=None, **kwargs):
+        def forward(self, input_ids = None, **kwargs):
             # Simple identity-like forward
             batch_size, seq_len = input_ids.shape
-            logits = torch.randn(batch_size, seq_len, 8, device=input_ids.device)
-            return SimpleNamespace(logits=logits)
+            logits = torch.randn(batch_size, seq_len, 8, device = input_ids.device)
+            return SimpleNamespace(logits = logits)
 
     return SimpleModel()
 
@@ -83,42 +84,42 @@ class TestEffectiveLogits:
 
     def test_no_transformation(self, dummy_logits):
         """Test that no transformation is applied when softcapping/scaling are 0."""
-        result = effective_logits(dummy_logits, logit_softcapping=0, logit_scaling=0)
+        result = effective_logits(dummy_logits, logit_softcapping = 0, logit_scaling = 0)
         # Should be close to original (converted to float32)
-        assert torch.allclose(result, dummy_logits.float(), atol=1e-6)
+        assert torch.allclose(result, dummy_logits.float(), atol = 1e-6)
 
     def test_logit_scaling(self, dummy_logits):
         """Test logit scaling: t * x."""
         scale = 2.0
-        result = effective_logits(dummy_logits, logit_scaling=scale)
+        result = effective_logits(dummy_logits, logit_scaling = scale)
         expected = scale * dummy_logits.float()
-        assert torch.allclose(result, expected, atol=1e-6)
+        assert torch.allclose(result, expected, atol = 1e-6)
 
     def test_logit_softcapping(self, dummy_logits):
         """Test logit softcapping: t * tanh(x / t)."""
         softcap = 30.0
-        result = effective_logits(dummy_logits, logit_softcapping=softcap)
+        result = effective_logits(dummy_logits, logit_softcapping = softcap)
         expected = softcap * torch.tanh(dummy_logits.float() / softcap)
-        assert torch.allclose(result, expected, atol=1e-6)
+        assert torch.allclose(result, expected, atol = 1e-6)
 
     def test_both_transformations(self, dummy_logits):
         """Test both scaling and softcapping together."""
         scale = 2.0
         softcap = 30.0
         result = effective_logits(
-            dummy_logits, logit_softcapping=softcap, logit_scaling=scale
+            dummy_logits, logit_softcapping = softcap, logit_scaling = scale
         )
         # Scaling first, then softcapping
         x = scale * dummy_logits.float()
         expected = softcap * torch.tanh(x / softcap)
-        assert torch.allclose(result, expected, atol=1e-6)
+        assert torch.allclose(result, expected, atol = 1e-6)
 
     def test_reads_from_model_config(self):
         """Test reading config from model."""
         model = SimpleNamespace(
-            config=SimpleNamespace(
-                final_logit_softcapping=30.0,
-                logit_scale=2.0,
+            config = SimpleNamespace(
+                final_logit_softcapping = 30.0,
+                logit_scale = 2.0,
             )
         )
         logits = torch.randn(2, 4, 8)
@@ -126,7 +127,7 @@ class TestEffectiveLogits:
         # Should apply both transformations
         x = 2.0 * logits.float()
         expected = 30.0 * torch.tanh(x / 30.0)
-        assert torch.allclose(result, expected, atol=1e-6)
+        assert torch.allclose(result, expected, atol = 1e-6)
 
 
 # -----------------------------------------------------------------------------
@@ -175,17 +176,17 @@ class TestFastCrossEntropyLossPerToken:
         """Test that results match PyTorch CE loss."""
         torch.manual_seed(42)
         logits = torch.randn(2, 4, 8)
-        labels = torch.tensor([[0, 1, 2, 3], [4, 5, 6, 7]], dtype=torch.long)
+        labels = torch.tensor([[0, 1, 2, 3], [4, 5, 6, 7]], dtype = torch.long)
 
         losses, valid_mask = fast_cross_entropy_loss_per_token(logits, labels)
 
         # Compare with PyTorch
         flat_logits = logits.view(-1, 8)
         flat_labels = labels.view(-1)
-        pytorch_losses = F.cross_entropy(flat_logits, flat_labels, reduction="none")
+        pytorch_losses = F.cross_entropy(flat_logits, flat_labels, reduction = "none")
 
         # Should be close
-        assert torch.allclose(losses, pytorch_losses, atol=1e-4)
+        assert torch.allclose(losses, pytorch_losses, atol = 1e-4)
 
 
 # -----------------------------------------------------------------------------
@@ -198,29 +199,31 @@ class TestBuildShiftLabels:
 
     def test_basic_shift(self):
         """Test basic label shifting."""
-        labels = torch.tensor([[0, 1, 2, 3], [4, 5, 6, 7]], dtype=torch.long)
+        labels = torch.tensor([[0, 1, 2, 3], [4, 5, 6, 7]], dtype = torch.long)
         shift_labels = build_shift_labels(labels)
 
         # shift_labels[..., :-1] = labels[..., 1:]
         # shift_labels[..., -1] = -100
-        expected = torch.tensor([[1, 2, 3, -100], [5, 6, 7, -100]], dtype=torch.long)
+        expected = torch.tensor([[1, 2, 3, -100], [5, 6, 7, -100]], dtype = torch.long)
         assert torch.equal(shift_labels, expected)
 
     def test_preserves_ignore_index(self):
         """Test that existing -100 values are preserved after shift."""
-        labels = torch.tensor([[0, 1, -100, -100], [4, 5, 6, -100]], dtype=torch.long)
+        labels = torch.tensor([[0, 1, -100, -100], [4, 5, 6, -100]], dtype = torch.long)
         shift_labels = build_shift_labels(labels)
 
         # First row: [1, -100, -100, -100]
         # Second row: [5, 6, -100, -100]
-        expected = torch.tensor([[1, -100, -100, -100], [5, 6, -100, -100]], dtype=torch.long)
+        expected = torch.tensor(
+            [[1, -100, -100, -100], [5, 6, -100, -100]], dtype = torch.long
+        )
         assert torch.equal(shift_labels, expected)
 
     def test_with_packed_seq_lengths(self):
         """Test shift labels with packed sequence boundary masking."""
         # Single row with packed sequences of lengths [2, 2]
-        labels = torch.tensor([[0, 1, 2, 3]], dtype=torch.long)
-        packed_seq_lengths = torch.tensor([2, 2], dtype=torch.int32)
+        labels = torch.tensor([[0, 1, 2, 3]], dtype = torch.long)
+        packed_seq_lengths = torch.tensor([2, 2], dtype = torch.int32)
 
         shift_labels = build_shift_labels(labels, packed_seq_lengths)
 
@@ -244,16 +247,16 @@ class TestGetReferenceForwardCallable:
         """Test disable_adapter policy when model has adapters."""
         # Mock disable_adapter
         simple_model.disable_adapter = MagicMock()
-        simple_model.disable_adapter.__enter__ = MagicMock(return_value=None)
-        simple_model.disable_adapter.__exit__ = MagicMock(return_value=False)
+        simple_model.disable_adapter.__enter__ = MagicMock(return_value = None)
+        simple_model.disable_adapter.__exit__ = MagicMock(return_value = False)
 
         ref_forward = get_reference_forward_callable(
-            simple_model, reference_policy="disable_adapter"
+            simple_model, reference_policy = "disable_adapter"
         )
 
         # Call the forward
         input_ids = torch.tensor([[1, 2, 3, 4]])
-        result = ref_forward(input_ids=input_ids)
+        result = ref_forward(input_ids = input_ids)
 
         # Should have called disable_adapter
         assert simple_model.disable_adapter.__enter__.called
@@ -261,11 +264,11 @@ class TestGetReferenceForwardCallable:
     def test_frozen_copy_policy(self, simple_model):
         """Test frozen_copy policy."""
         ref_forward = get_reference_forward_callable(
-            simple_model, reference_policy="frozen_copy"
+            simple_model, reference_policy = "frozen_copy"
         )
 
         input_ids = torch.tensor([[1, 2, 3, 4]])
-        result = ref_forward(input_ids=input_ids)
+        result = ref_forward(input_ids = input_ids)
 
         # Should return logits
         assert result.shape[0] == 1  # batch size
@@ -275,11 +278,11 @@ class TestGetReferenceForwardCallable:
         """Test that disable_adapter falls back to frozen_copy when no adapters."""
         # Model without disable_adapter method
         ref_forward = get_reference_forward_callable(
-            simple_model, reference_policy="disable_adapter"
+            simple_model, reference_policy = "disable_adapter"
         )
 
         input_ids = torch.tensor([[1, 2, 3, 4]])
-        result = ref_forward(input_ids=input_ids)
+        result = ref_forward(input_ids = input_ids)
 
         # Should still work (uses frozen copy fallback)
         assert result is not None
@@ -311,7 +314,7 @@ class TestKLDivergence:
         kl = _compute_kl_divergence(logits, logits.clone())
 
         # Should be close to zero
-        assert torch.allclose(kl, torch.zeros_like(kl), atol=1e-5)
+        assert torch.allclose(kl, torch.zeros_like(kl), atol = 1e-5)
 
     def test_kl_shape(self):
         """Test KL output shape."""
@@ -368,9 +371,7 @@ class TestComputeASFTLoss:
             "labels": torch.tensor([[1, 2, 3, 4]]),
         }
 
-        loss = compute_asft_loss(
-            simple_model, inputs, asft_mode="sft", kl_weight=0.0
-        )
+        loss = compute_asft_loss(simple_model, inputs, asft_mode = "sft", kl_weight = 0.0)
 
         # Should return a scalar loss
         assert loss.dim() == 0
@@ -383,9 +384,7 @@ class TestComputeASFTLoss:
             "labels": torch.tensor([[1, 2, 3, 4]]),
         }
 
-        loss = compute_asft_loss(
-            simple_model, inputs, asft_mode="dft", kl_weight=0.0
-        )
+        loss = compute_asft_loss(simple_model, inputs, asft_mode = "dft", kl_weight = 0.0)
 
         assert loss.dim() == 0
         assert loss.requires_grad
@@ -400,9 +399,9 @@ class TestComputeASFTLoss:
         loss = compute_asft_loss(
             simple_model,
             inputs,
-            asft_mode="sft+kl",
-            kl_weight=0.1,
-            reference_policy="frozen_copy",
+            asft_mode = "sft+kl",
+            kl_weight = 0.1,
+            reference_policy = "frozen_copy",
         )
 
         assert loss.dim() == 0
@@ -418,9 +417,9 @@ class TestComputeASFTLoss:
         loss = compute_asft_loss(
             simple_model,
             inputs,
-            asft_mode="asft",
-            kl_weight=0.1,
-            reference_policy="frozen_copy",
+            asft_mode = "asft",
+            kl_weight = 0.1,
+            reference_policy = "frozen_copy",
         )
 
         assert loss.dim() == 0
@@ -434,7 +433,7 @@ class TestComputeASFTLoss:
         }
 
         loss, outputs = compute_asft_loss(
-            simple_model, inputs, asft_mode="sft", return_outputs=True
+            simple_model, inputs, asft_mode = "sft", return_outputs = True
         )
 
         assert loss.dim() == 0
@@ -447,7 +446,7 @@ class TestComputeASFTLoss:
             "labels": torch.tensor([[-100, -100, -100, -100]]),
         }
 
-        loss = compute_asft_loss(simple_model, inputs, asft_mode="sft")
+        loss = compute_asft_loss(simple_model, inputs, asft_mode = "sft")
 
         # Should return zero loss
         assert loss.item() == 0.0
@@ -460,7 +459,7 @@ class TestComputeASFTLoss:
             "num_items_in_batch": 2,  # Override default
         }
 
-        loss = compute_asft_loss(simple_model, inputs, asft_mode="sft")
+        loss = compute_asft_loss(simple_model, inputs, asft_mode = "sft")
 
         # Should use the provided n_items
         assert loss.dim() == 0
@@ -470,10 +469,10 @@ class TestComputeASFTLoss:
         inputs = {
             "input_ids": torch.tensor([[1, 2, 3, 4]]),
             "labels": torch.tensor([[1, 2, 3, 4]]),
-            "packed_seq_lengths": torch.tensor([2, 2], dtype=torch.int32),
+            "packed_seq_lengths": torch.tensor([2, 2], dtype = torch.int32),
         }
 
-        loss = compute_asft_loss(simple_model, inputs, asft_mode="sft")
+        loss = compute_asft_loss(simple_model, inputs, asft_mode = "sft")
 
         # Should handle packing without error
         assert loss.dim() == 0
@@ -501,10 +500,10 @@ class TestASFTStreamingConfig:
     def test_custom_values(self):
         """Test custom configuration values."""
         config = ASFTStreamingConfig(
-            enabled=True,
-            ref_strategy="batch_micro",
-            ref_microbatch_size=4,
-            seq_chunk_size=256,
+            enabled = True,
+            ref_strategy = "batch_micro",
+            ref_microbatch_size = 4,
+            seq_chunk_size = 256,
         )
 
         assert config.enabled is True
@@ -515,9 +514,9 @@ class TestASFTStreamingConfig:
     def test_config_immutability_when_none_values(self, simple_model):
         """Test that streaming_config is not mutated when values are None."""
         config = ASFTStreamingConfig(
-            enabled=True,
-            ref_strategy="batch_micro",
-            ref_microbatch_size=None,  # Should use default without mutation
+            enabled = True,
+            ref_strategy = "batch_micro",
+            ref_microbatch_size = None,  # Should use default without mutation
         )
         original_microbatch = config.ref_microbatch_size
         original_chunk = config.seq_chunk_size
@@ -532,8 +531,8 @@ class TestASFTStreamingConfig:
         loss = compute_asft_loss(
             simple_model,
             inputs,
-            asft_mode="sft",
-            streaming_config=config,
+            asft_mode = "sft",
+            streaming_config = config,
         )
 
         # Config should not be mutated
@@ -558,7 +557,7 @@ class TestBackwardCompatibility:
         }
 
         # Compute ASFT loss in SFT mode
-        asft_loss = compute_asft_loss(simple_model, inputs, asft_mode="sft")
+        asft_loss = compute_asft_loss(simple_model, inputs, asft_mode = "sft")
 
         # The loss should be a valid scalar
         assert asft_loss.dim() == 0
@@ -576,28 +575,28 @@ class TestBackwardCompatibility:
         full_loss = compute_asft_loss(
             simple_model,
             inputs,
-            asft_mode="sft+kl",
-            kl_weight=0.1,
-            reference_policy="frozen_copy",
-            streaming_config=ASFTStreamingConfig(enabled=False),
+            asft_mode = "sft+kl",
+            kl_weight = 0.1,
+            reference_policy = "frozen_copy",
+            streaming_config = ASFTStreamingConfig(enabled = False),
         )
 
         # With batch_micro streaming (should be equivalent for batch=1)
         streaming_loss = compute_asft_loss(
             simple_model,
             inputs,
-            asft_mode="sft+kl",
-            kl_weight=0.1,
-            reference_policy="frozen_copy",
-            streaming_config=ASFTStreamingConfig(
-                enabled=True,
-                ref_strategy="batch_micro",
-                ref_microbatch_size=1,
+            asft_mode = "sft+kl",
+            kl_weight = 0.1,
+            reference_policy = "frozen_copy",
+            streaming_config = ASFTStreamingConfig(
+                enabled = True,
+                ref_strategy = "batch_micro",
+                ref_microbatch_size = 1,
             ),
         )
 
         # Should be very close
-        assert torch.allclose(full_loss, streaming_loss, atol=1e-4)
+        assert torch.allclose(full_loss, streaming_loss, atol = 1e-4)
 
 
 # -----------------------------------------------------------------------------

@@ -492,7 +492,9 @@ if __name__ == "__main__":
     )
 
     # ASFT Options
-    asft_group = parser.add_argument_group("🎯 ASFT Options", "Adaptive SFT loss configuration (off by default)")
+    asft_group = parser.add_argument_group(
+        "🎯 ASFT Options", "Adaptive SFT loss configuration (off by default)"
+    )
     asft_group.add_argument(
         "--asft",
         action = "store_true",

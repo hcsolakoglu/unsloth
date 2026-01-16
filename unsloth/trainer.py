@@ -18,6 +18,7 @@ import psutil
 import warnings
 from dataclasses import dataclass, field
 from typing import Literal, Optional, Union
+from copy import deepcopy
 from functools import wraps
 
 import trl
@@ -262,7 +263,7 @@ class ASFTTrainer(UnslothTrainer):
         # Will be lazily initialized if needed
         self._asft_original_model = None
 
-    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+    def compute_loss(self, model, inputs, return_outputs = False, **kwargs):
         """Compute loss with optional ASFT path.
 
         When asft_enabled=False, delegates entirely to parent compute_loss.
@@ -279,18 +280,34 @@ class ASFTTrainer(UnslothTrainer):
         """
         # If ASFT is disabled, use standard path unchanged
         if not self.asft_enabled:
-            return super().compute_loss(model, inputs, return_outputs=return_outputs, **kwargs)
+            return super().compute_loss(
+                model, inputs, return_outputs = return_outputs, **kwargs
+            )
+
+        num_items_in_batch = kwargs.get("num_items_in_batch")
+        if num_items_in_batch is not None:
+            inputs["num_items_in_batch"] = num_items_in_batch
+
+        if self.asft_mode in ("sft+kl", "asft"):
+            needs_frozen_copy = self.reference_policy == "frozen_copy" or (
+                self.reference_policy == "disable_adapter"
+                and not hasattr(model, "disable_adapter")
+            )
+            if needs_frozen_copy and self._asft_original_model is None:
+                self._asft_original_model = deepcopy(model)
+                self._asft_original_model.eval()
+                self._asft_original_model.requires_grad_(False)
 
         # ASFT-enabled path
         return compute_asft_loss(
-            model=model,
-            inputs=inputs,
-            asft_mode=self.asft_mode,
-            kl_weight=self.kl_weight,
-            reference_policy=self.reference_policy,
-            streaming_config=self.asft_streaming,
-            original_model=self._asft_original_model,
-            return_outputs=return_outputs,
+            model = model,
+            inputs = inputs,
+            asft_mode = self.asft_mode,
+            kl_weight = self.kl_weight,
+            reference_policy = self.reference_policy,
+            streaming_config = self.asft_streaming,
+            original_model = self._asft_original_model,
+            return_outputs = return_outputs,
         )
 
 

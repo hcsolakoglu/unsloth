@@ -193,7 +193,6 @@ def fast_cross_entropy_loss_per_token(
     return losses, valid_mask
 
 
-
 # -----------------------------------------------------------------------------
 # A3) Helper: build_shift_labels - Unsloth-style label shifting
 # -----------------------------------------------------------------------------
@@ -228,7 +227,7 @@ def build_shift_labels(
         mask_packed_sequence_boundaries(
             shift_labels,
             packed_seq_lengths,
-            ignore_index=ignore_index,
+            ignore_index = ignore_index,
         )
 
     return shift_labels
@@ -256,6 +255,7 @@ def get_reference_forward_callable(
     model: nn.Module,
     reference_policy: Literal["disable_adapter", "frozen_copy"] = "disable_adapter",
     original_model: Optional[nn.Module] = None,
+    return_outputs: bool = False,
 ) -> Callable[..., torch.Tensor]:
     """Get a callable for reference model forward pass.
 
@@ -278,7 +278,7 @@ def get_reference_forward_callable(
             with _inference_eval_context(model):
                 with model.disable_adapter():
                     outputs = model(**forward_inputs)
-                    return outputs.logits
+                    return outputs if return_outputs else outputs.logits
 
         return ref_forward
 
@@ -293,7 +293,7 @@ def get_reference_forward_callable(
         def ref_forward(**forward_inputs) -> torch.Tensor:
             with _inference_eval_context(original_model):
                 outputs = original_model(**forward_inputs)
-                return outputs.logits
+                return outputs if return_outputs else outputs.logits
 
         return ref_forward
 
@@ -338,25 +338,21 @@ def _compute_kl_divergence(
         ref_logits = ref_logits.view(batch * seq_len, vocab_size)
 
     # Apply effective logits transformation
-    cur_eff = effective_logits(
-        cur_logits, model, logit_softcapping, logit_scaling
-    )
-    ref_eff = effective_logits(
-        ref_logits, model, logit_softcapping, logit_scaling
-    )
+    cur_eff = effective_logits(cur_logits, model, logit_softcapping, logit_scaling)
+    ref_eff = effective_logits(ref_logits, model, logit_softcapping, logit_scaling)
 
     if force_fp32:
         cur_eff = cur_eff.float()
         ref_eff = ref_eff.float()
 
     # Compute log probabilities and probabilities
-    cur_logp = F.log_softmax(cur_eff, dim=-1)
-    ref_p = F.softmax(ref_eff, dim=-1)
+    cur_logp = F.log_softmax(cur_eff, dim = -1)
+    ref_p = F.softmax(ref_eff, dim = -1)
 
     # KL(p_ref || p_cur) = sum_i p_ref(i) * (log p_ref(i) - log p_cur(i))
     # Using F.kl_div: kl_div(input=log_cur, target=ref) computes the right thing
     # with reduction='none', we get per-element, then sum over vocab
-    kl = F.kl_div(cur_logp, ref_p, reduction="none").sum(dim=-1)
+    kl = F.kl_div(cur_logp, ref_p, reduction = "none").sum(dim = -1)
 
     return kl
 
@@ -401,13 +397,13 @@ def _compute_dft_weights(
     logits_eff = effective_logits(logits, model, logit_softcapping, logit_scaling)
 
     # Compute softmax probabilities
-    p = F.softmax(logits_eff.float(), dim=-1)
+    p = F.softmax(logits_eff.float(), dim = -1)
 
     # Safe labels for gather (clamp -100 to 0)
-    safe_labels = labels.clamp(min=0, max=vocab_size - 1)
+    safe_labels = labels.clamp(min = 0, max = vocab_size - 1)
 
     # Gather probabilities at target positions
-    weights = p.gather(dim=-1, index=safe_labels.unsqueeze(-1)).squeeze(-1)
+    weights = p.gather(dim = -1, index = safe_labels.unsqueeze(-1)).squeeze(-1)
 
     # Detach - weights should not receive gradients
     return weights.detach()
@@ -416,6 +412,18 @@ def _compute_dft_weights(
 # -----------------------------------------------------------------------------
 # Streaming helpers
 # -----------------------------------------------------------------------------
+
+
+def _unwrap_reference_outputs(
+    ref_outputs: Any,
+) -> Tuple[torch.Tensor, Optional[Any]]:
+    """Extract logits and past_key_values from reference outputs."""
+    if hasattr(ref_outputs, "logits"):
+        return ref_outputs.logits, getattr(ref_outputs, "past_key_values", None)
+    if isinstance(ref_outputs, (tuple, list)) and len(ref_outputs) > 0:
+        past_key_values = ref_outputs[1] if len(ref_outputs) > 1 else None
+        return ref_outputs[0], past_key_values
+    return ref_outputs, None
 
 
 def _compute_kl_batch_micro(
@@ -451,7 +459,7 @@ def _compute_kl_batch_micro(
     """
     batch_size = cur_logits.shape[0]
     device = cur_logits.device
-    kl = torch.zeros_like(shift_labels, dtype=torch.float32)
+    kl = torch.zeros_like(shift_labels, dtype = torch.float32)
 
     for b_start in range(0, batch_size, microbatch_size):
         b_end = min(b_start + microbatch_size, batch_size)
@@ -465,7 +473,8 @@ def _compute_kl_batch_micro(
                 mb_inputs[key] = value
 
         # Get reference logits for microbatch
-        ref_logits_mb = ref_forward(**mb_inputs)
+        ref_outputs_mb = ref_forward(**mb_inputs)
+        ref_logits_mb, _ = _unwrap_reference_outputs(ref_outputs_mb)
         cur_logits_mb = cur_logits[b_start:b_end]
 
         # Compute KL for this microbatch
@@ -525,7 +534,7 @@ def _compute_kl_seq_kv_cache(
     """
     batch_size, seq_len, vocab_size = cur_logits.shape
     device = cur_logits.device
-    kl = torch.zeros(batch_size, seq_len, dtype=torch.float32, device=device)
+    kl = torch.zeros(batch_size, seq_len, dtype = torch.float32, device = device)
 
     # Try to get the underlying model for KV cache support
     underlying_model = model
@@ -544,7 +553,8 @@ def _compute_kl_seq_kv_cache(
 
     if not supports_cache:
         # Fallback to full forward
-        ref_logits = ref_forward(**forward_inputs)
+        ref_outputs = ref_forward(**forward_inputs)
+        ref_logits, _ = _unwrap_reference_outputs(ref_outputs)
         kl_full = _compute_kl_divergence(
             cur_logits,
             ref_logits,
@@ -573,7 +583,11 @@ def _compute_kl_seq_kv_cache(
                 chunk_inputs[key] = value[:, :s_end]
             elif key == "position_ids":
                 chunk_inputs[key] = value[:, s_start:s_end]
-            elif torch.is_tensor(value) and value.dim() >= 2 and value.shape[1] == seq_len:
+            elif (
+                torch.is_tensor(value)
+                and value.dim() >= 2
+                and value.shape[1] == seq_len
+            ):
                 chunk_inputs[key] = value[:, s_start:s_end]
             else:
                 chunk_inputs[key] = value
@@ -588,13 +602,25 @@ def _compute_kl_seq_kv_cache(
             # Get reference logits for chunk
             # Note: ref_forward may not support all these kwargs
             ref_outputs = ref_forward(**chunk_inputs)
-
-            if hasattr(ref_outputs, "past_key_values"):
-                past_key_values = ref_outputs.past_key_values
-                ref_logits_chunk = ref_outputs.logits
-            else:
-                ref_logits_chunk = ref_outputs
-                past_key_values = None  # Can't continue with cache
+            ref_logits_chunk, ref_past_key_values = _unwrap_reference_outputs(
+                ref_outputs
+            )
+            if ref_past_key_values is None and s_end < seq_len:
+                # Can't continue without cache; fall back to full forward
+                ref_outputs = ref_forward(**forward_inputs)
+                ref_logits, _ = _unwrap_reference_outputs(ref_outputs)
+                kl_full = _compute_kl_divergence(
+                    cur_logits,
+                    ref_logits,
+                    model,
+                    logit_softcapping,
+                    logit_scaling,
+                    force_fp32,
+                )
+                if kl_full.dim() == 1:
+                    kl_full = kl_full.view(batch_size, seq_len)
+                return kl_full
+            past_key_values = ref_past_key_values
 
             cur_logits_chunk = cur_logits[:, s_start:s_end]
 
@@ -620,7 +646,8 @@ def _compute_kl_seq_kv_cache(
             # Fallback to full forward on KV cache errors
             # These exceptions typically indicate the model doesn't support
             # the chunked KV cache approach (e.g., missing past_key_values support)
-            ref_logits = ref_forward(**forward_inputs)
+            ref_outputs = ref_forward(**forward_inputs)
+            ref_logits, _ = _unwrap_reference_outputs(ref_outputs)
             kl_full = _compute_kl_divergence(
                 cur_logits,
                 ref_logits,
@@ -634,7 +661,6 @@ def _compute_kl_seq_kv_cache(
             return kl_full
 
     return kl
-
 
 
 # -----------------------------------------------------------------------------
@@ -687,8 +713,10 @@ def compute_asft_loss(
         if logit_scaling == 0:
             logit_scaling = getattr(config, "logit_scaling", 0)
 
-    # Build forward inputs (without labels to force logits materialization)
-    forward_inputs = {k: v for k, v in inputs.items() if k != "labels"}
+    # Build forward inputs (without labels/num_items to force logits materialization)
+    forward_inputs = {
+        k: v for k, v in inputs.items() if k not in {"labels", "num_items_in_batch"}
+    }
 
     # Main forward pass - ASFT always needs logits
     outputs = model(**forward_inputs)
@@ -708,9 +736,7 @@ def compute_asft_loss(
 
     # Handle edge case: no valid tokens
     if valid_mask.sum() == 0:
-        zero_loss = torch.tensor(
-            0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
-        )
+        zero_loss = logits.sum() * 0.0
         if return_outputs:
             return zero_loss, outputs
         return zero_loss
@@ -738,8 +764,14 @@ def compute_asft_loss(
 
     elif asft_mode in ("sft+kl", "asft"):
         # Need KL divergence
+        needs_outputs = (
+            streaming_config.enabled and streaming_config.ref_strategy == "seq_kv_cache"
+        )
         ref_forward = get_reference_forward_callable(
-            model, reference_policy, original_model
+            model,
+            reference_policy,
+            original_model,
+            return_outputs = needs_outputs,
         )
 
         # Compute KL based on streaming strategy
@@ -747,7 +779,9 @@ def compute_asft_loss(
         if streaming_config.enabled and streaming_config.ref_strategy == "batch_micro":
             ref_microbatch_size = streaming_config.ref_microbatch_size
             if ref_microbatch_size is None:
-                ref_microbatch_size = max(1, batch_size // _DEFAULT_REF_MICROBATCH_DIVISOR)
+                ref_microbatch_size = max(
+                    1, batch_size // _DEFAULT_REF_MICROBATCH_DIVISOR
+                )
             kl = _compute_kl_batch_micro(
                 model,
                 logits,
@@ -760,7 +794,9 @@ def compute_asft_loss(
                 logit_scaling,
                 streaming_config.force_fp32_kl,
             )
-        elif streaming_config.enabled and streaming_config.ref_strategy == "seq_kv_cache":
+        elif (
+            streaming_config.enabled and streaming_config.ref_strategy == "seq_kv_cache"
+        ):
             seq_chunk_size = streaming_config.seq_chunk_size
             if seq_chunk_size is None:
                 seq_chunk_size = _DEFAULT_SEQ_CHUNK_SIZE
@@ -778,7 +814,8 @@ def compute_asft_loss(
             )
         else:
             # Full reference forward
-            ref_logits = ref_forward(**forward_inputs)
+            ref_outputs = ref_forward(**forward_inputs)
+            ref_logits, _ = _unwrap_reference_outputs(ref_outputs)
             kl = _compute_kl_divergence(
                 logits,
                 ref_logits,
