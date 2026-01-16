@@ -38,6 +38,7 @@ def run(args):
     from datasets import load_dataset
     from transformers.utils import strtobool
     from trl import SFTTrainer, SFTConfig
+    from unsloth.trainer import UnslothTrainer
     from unsloth import is_bfloat16_supported
     from unsloth.models.loader_utils import prepare_device_map
     import logging
@@ -154,9 +155,18 @@ def run(args):
         ddp_find_unused_parameters = False if distributed else None,
         packing = args.packing,
     )
+    training_args.asft_enabled = args.asft_enabled
+    training_args.asft_sft_weight = args.asft_sft_weight
+    training_args.asft_dft_weight = args.asft_dft_weight
+    training_args.asft_dft_beta = args.asft_dft_beta
+    training_args.asft_kl_weight = args.asft_kl_weight
+    training_args.asft_streaming_strategy = args.asft_streaming_strategy
+    training_args.asft_streaming_micro_batch_size = args.asft_streaming_micro_batch_size
+    training_args.asft_streaming_seq_chunk_size = args.asft_streaming_seq_chunk_size
 
     # Initialize trainer
-    trainer = SFTTrainer(
+    trainer_cls = UnslothTrainer if args.asft_enabled else SFTTrainer
+    trainer = trainer_cls(
         model = model,
         processing_class = tokenizer,
         train_dataset = dataset,
@@ -359,6 +369,56 @@ if __name__ == "__main__":
         "--packing",
         action = "store_true",
         help = "Enable padding-free sample packing via TRL's bin packer.",
+    )
+
+    asft_group = parser.add_argument_group("🧪 ASFT Options")
+    asft_group.add_argument(
+        "--asft_enabled",
+        action = "store_true",
+        help = "Enable ASFT loss computation.",
+    )
+    asft_group.add_argument(
+        "--asft_sft_weight",
+        type = float,
+        default = 1.0,
+        help = "Weight for the SFT loss term.",
+    )
+    asft_group.add_argument(
+        "--asft_dft_weight",
+        type = float,
+        default = 1.0,
+        help = "Weight for the DFT loss term.",
+    )
+    asft_group.add_argument(
+        "--asft_dft_beta",
+        type = float,
+        default = 1.0,
+        help = "DFT weighting beta.",
+    )
+    asft_group.add_argument(
+        "--asft_kl_weight",
+        type = float,
+        default = 1.0,
+        help = "Weight for the KL(ref || cur) term.",
+    )
+    asft_group.add_argument(
+        "--asft_streaming_strategy",
+        type = str,
+        default = None,
+        choices = ["batch_micro", "seq_kv_cache"],
+        help = "Enable ASFT streaming with the chosen strategy.",
+    )
+    asft_group.add_argument(
+        "--asft_streaming_micro_batch_size",
+        type = int,
+        default = None,
+        help = "Micro batch size for ASFT batch_micro streaming.",
+    )
+    asft_group.add_argument(
+        "--asft_streaming_seq_chunk_size",
+        type = int,
+        default = None,
+        help = "Sequence chunk size for ASFT seq_kv_cache streaming.",
     )
 
     report_group = parser.add_argument_group("📊 Report Options")

@@ -39,6 +39,7 @@ from unsloth_zoo.vision_utils import (
 from unsloth_zoo.hf_utils import get_transformers_model_type
 from unsloth_zoo.utils import Version
 import dataclasses
+from .losses.asft import ASFTStreamingConfig, compute_asft_loss
 
 __all__ = [
     "UnslothTrainingArguments",
@@ -196,6 +197,50 @@ class UnslothTrainer(SFTTrainer):
                 embedding_learning_rate,
             )
         return self.optimizer
+
+    def compute_loss(self, model, inputs, return_outputs = False, num_items_in_batch = None):
+        if not getattr(self.args, "asft_enabled", False):
+            return super().compute_loss(
+                model,
+                inputs,
+                return_outputs = return_outputs,
+                num_items_in_batch = num_items_in_batch,
+            )
+        streaming_config = getattr(self, "asft_streaming_config", None)
+        if streaming_config is None:
+            strategy = getattr(self.args, "asft_streaming_strategy", None)
+            if strategy:
+                streaming_config = ASFTStreamingConfig(
+                    strategy = strategy,
+                    micro_batch_size = getattr(
+                        self.args,
+                        "asft_streaming_micro_batch_size",
+                        None,
+                    ),
+                    seq_chunk_size = getattr(
+                        self.args,
+                        "asft_streaming_seq_chunk_size",
+                        None,
+                    ),
+                )
+        reference_model = (
+            getattr(self, "asft_reference_model", None)
+            or getattr(self, "reference_model", None)
+            or getattr(model, "reference_model", None)
+            or getattr(model, "ref_model", None)
+        )
+        return compute_asft_loss(
+            model,
+            inputs,
+            reference_model = reference_model,
+            streaming_config = streaming_config,
+            sft_weight = getattr(self.args, "asft_sft_weight", 1.0),
+            dft_weight = getattr(self.args, "asft_dft_weight", 1.0),
+            dft_beta = getattr(self.args, "asft_dft_beta", 1.0),
+            kl_weight = getattr(self.args, "asft_kl_weight", 1.0),
+            return_outputs = return_outputs,
+            num_items_in_batch = num_items_in_batch,
+        )
 
 
 # From `trl>=0.13.0`, they changed how to pass several params to the trainer
